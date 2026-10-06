@@ -34,3 +34,13 @@ class FixedClock:
         """返回固定的 UTC 时间。"""
 
         return self._value
+
+    def advance(self, **kwargs) -> None:
+        """把固定时钟向后推移（仅用于测试与离线验收）。"""
+
+        from datetime import timedelta
+
+        if "days" in kwargs:
+            self._value = self._value + timedelta(days=kwargs.pop("days"))
+        if kwargs:
+            self._value = self._value + timedelta(**kwargs)

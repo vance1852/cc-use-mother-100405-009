@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .errors import DomainError, ValidationError
+from .jv_service import JointVentureService
 from .service import DomainService
 from .storage import Database
 
@@ -21,6 +22,9 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
     body = body or {}
     parsed = urlparse(path)
     actor_id = headers.get("X-Actor-Id", "")
+    jv_service = getattr(service, "jv", None)
+    if jv_service is None:
+        jv_service = JointVentureService(service.database, service.clock)
     try:
         if method == "GET" and parsed.path == "/health":
             valid, count = service.verify_audit()
@@ -48,11 +52,93 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+        status, payload = _route_jv(jv_service, method, parsed, body, actor_id)
+        if status is not None:
+            return status, payload
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}
     except (TypeError, ValueError) as exc:
         return 400, {"error": "invalid_request", "message": str(exc)}
+
+
+def _query(parsed, key: str, default: str | None = None) -> str | None:
+    return parse_qs(parsed.query).get(key, [default])[0]
+
+
+def _route_jv(jv: JointVentureService, method: str, parsed, body: dict[str, Any],
+              actor_id: str) -> tuple[int | None, dict[str, Any]]:
+    """分派区域创新联合投入相关路由。"""
+
+    path = parsed.path
+    parts = [p for p in path.split("/") if p]
+    if not parts or parts[0] != "jv":
+        return None, {}
+    rest = parts[1:]
+
+    def created(receipt) -> tuple[int, dict[str, Any]]:
+        return 200 if receipt.replayed else 201, receipt.__dict__
+
+    if method == "POST":
+        if rest == ["platforms"]:
+            return created(jv.create_platform(actor_id=actor_id, **body))
+        if rest == ["memberships"]:
+            return created(jv.register_membership(actor_id=actor_id, **body))
+        if rest == ["charters"]:
+            return created(jv.publish_charter(actor_id=actor_id, **body))
+        if rest == ["persons"]:
+            return created(jv.register_person(actor_id=actor_id, **body))
+        if rest == ["equipment"]:
+            return created(jv.register_equipment(actor_id=actor_id, **body))
+        if rest == ["fund-sources"]:
+            return created(jv.register_fund_source(actor_id=actor_id, **body))
+        if rest == ["plans"]:
+            return created(jv.create_plan(actor_id=actor_id, **body))
+        if rest == ["milestones"]:
+            return created(jv.create_milestone(actor_id=actor_id, **body))
+        if len(rest) == 3 and rest[0] == "milestones" and rest[2] == "complete":
+            return created(jv.complete_milestone(actor_id=actor_id, milestone_id=rest[1],
+                                                 **{k: v for k, v in body.items() if k != "milestone_id"}))
+        if rest == ["commitments"]:
+            return created(jv.register_commitment(actor_id=actor_id, **body))
+        if len(rest) == 3 and rest[0] == "commitments" and rest[2] == "submit":
+            return 200, jv.submit_commitment(actor_id=actor_id, commitment_id=rest[1])
+        if len(rest) == 3 and rest[0] == "commitments" and rest[2] == "withdraw":
+            return created(jv.withdraw_commitment(actor_id=actor_id, commitment_id=rest[1], **body))
+        if len(rest) == 3 and rest[0] == "commitments" and rest[2] == "sign":
+            return 200, jv.sign_commitment(actor_id=actor_id, commitment_id=rest[1],
+                                           note=body.get("note"))
+        if rest == ["performances"]:
+            return created(jv.record_performance(actor_id=actor_id, **body))
+        if rest == ["events", "person-departed"]:
+            return created(jv.record_person_departed(actor_id=actor_id, **body))
+        if rest == ["events", "equipment-downtime"]:
+            return created(jv.record_equipment_downtime(actor_id=actor_id, **body))
+        if rest == ["events", "equipment-recovered"]:
+            return created(jv.record_equipment_recovered(actor_id=actor_id, **body))
+        if rest == ["fund-tranches", "delay"]:
+            return created(jv.delay_fund_tranch(actor_id=actor_id, **body))
+        if rest == ["fund-tranches", "receive"]:
+            return created(jv.receive_fund_tranch(actor_id=actor_id, **body))
+        if rest == ["member-exits"]:
+            return created(jv.record_member_exit(actor_id=actor_id, **body))
+        if rest == ["outcome-policies"]:
+            return created(jv.set_outcome_policy(actor_id=actor_id, **body))
+        if rest == ["outcomes", "finalize"]:
+            return created(jv.finalize_outcome(actor_id=actor_id, **body))
+    if method == "GET":
+        if len(rest) == 3 and rest[0] == "platforms" and rest[2] == "snapshot":
+            return 200, jv.get_platform_snapshot(rest[1], _query(parsed, "as_of"))
+        if rest == ["charters"]:
+            platform_id = _query(parsed, "platform_id")
+            if not platform_id:
+                raise ValidationError("platform_id 不能为空")
+            return 200, jv.get_charter_at(platform_id, _query(parsed, "as_of"))
+        if len(rest) == 2 and rest[0] == "commitments":
+            return 200, jv.get_commitment(rest[1], _query(parsed, "as_of"))
+        if len(rest) == 3 and rest[0] == "milestones" and rest[2] == "readiness":
+            return 200, jv.get_milestone_readiness(rest[1], _query(parsed, "as_of"))
+    return 404, {"error": "route_not_found", "message": "接口不存在"}
 
 
 class Handler(BaseHTTPRequestHandler):
