@@ -29,6 +29,22 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertEqual("invalid_request", payload["error"])
 
+    def test_joint_route_validates_body(self):
+        status, payload = route(self.service, "POST", "/joint/charter-versions",
+                                {"request_id": "x"}, {"X-Actor-Id": "bootstrap"})
+        self.assertEqual(400, status)
+        self.assertEqual("invalid_request", payload["error"])
+
+    def test_joint_readiness_requires_milestone(self):
+        status, payload = route(self.service, "GET", "/joint/milestone-readiness", None)
+        self.assertEqual(400, status)
+        self.assertEqual("validation_error", payload["error"])
+
+    def test_joint_unknown_route_returns_404(self):
+        status, payload = route(self.service, "GET", "/joint/missing", None)
+        self.assertEqual(404, status)
+        self.assertEqual("route_not_found", payload["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,8 +9,74 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .errors import DomainError, ValidationError
+from .joint import JointService
 from .service import DomainService
 from .storage import Database
+
+
+def _query(parsed, name: str, required: bool = True) -> str | None:
+    value = parse_qs(parsed.query).get(name, [None])[0]
+    if required and not value:
+        raise ValidationError(f"{name} 不能为空")
+    return value
+
+
+def _route_joint(joint: JointService, method: str, parsed, body: dict[str, Any],
+                 actor_id: str) -> tuple[int, dict[str, Any]]:
+    """分派区域创新联合投入与履约服务接口。"""
+
+    path = parsed.path
+    if method == "POST" and path == "/joint/charter-versions":
+        receipt = joint.register_charter_version(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/members":
+        receipt = joint.admit_member(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/resources":
+        receipt = joint.register_resource(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/milestones":
+        receipt = joint.define_milestone(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/priority-rules":
+        receipt = joint.freeze_priority_rules(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/commitments":
+        receipt = joint.draft_commitment(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/countersignatures":
+        receipt = joint.countersign_commitment(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/commitment-closures":
+        receipt = joint.close_commitment(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/fulfillments":
+        receipt = joint.record_fulfillment(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/disruptions":
+        receipt = joint.record_disruption(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "POST" and path == "/joint/distributions":
+        receipt = joint.distribute_outcome(actor_id=actor_id, **body)
+        return 200 if receipt.replayed else 201, receipt.__dict__
+    if method == "GET" and path == "/joint/milestone-readiness":
+        return 200, joint.milestone_readiness(_query(parsed, "milestone_id"),
+                                              _query(parsed, "as_of", required=False))
+    if method == "GET" and path == "/joint/member-position":
+        return 200, joint.member_position(_query(parsed, "member_id"),
+                                          _query(parsed, "as_of", required=False))
+    if method == "GET" and path == "/joint/exit-impact":
+        return 200, joint.exit_impact(_query(parsed, "member_id"),
+                                      _query(parsed, "as_of", required=False))
+    if method == "GET" and path == "/joint/charter-at":
+        return 200, joint.charter_at(_query(parsed, "charter_id"), _query(parsed, "date"))
+    if method == "GET" and path == "/joint/commitments-at":
+        return 200, {"items": joint.commitments_at(_query(parsed, "date"),
+                                                   _query(parsed, "member_id", required=False))}
+    if method == "GET" and path == "/joint/resource-capacity":
+        return 200, joint.resource_capacity(_query(parsed, "resource_id"),
+                                            _query(parsed, "as_of", required=False))
+    return 404, {"error": "route_not_found", "message": "接口不存在"}
 
 
 def route(service: DomainService, method: str, path: str, body: dict[str, Any] | None,
@@ -48,6 +114,8 @@ def route(service: DomainService, method: str, path: str, body: dict[str, Any] |
             query = parse_qs(parsed.query)
             after = int(query.get("after_sequence", ["0"])[0])
             return 200, {"items": service.audit_events(after)}
+        if parsed.path.startswith("/joint/"):
+            return _route_joint(JointService(service), method, parsed, body, actor_id)
         return 404, {"error": "route_not_found", "message": "接口不存在"}
     except DomainError as exc:
         return exc.status, {"error": exc.code, "message": str(exc)}

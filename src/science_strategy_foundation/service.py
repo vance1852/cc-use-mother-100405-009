@@ -54,6 +54,28 @@ class DomainService:
         if actor.role not in roles:
             raise PermissionDenied("当前角色不能执行该动作")
 
+    def authenticate(self, connection, actor_id: str) -> Actor:
+        """校验操作者，供同包的领域扩展服务复用。"""
+        return self._actor(connection, actor_id)
+
+    def require_roles(self, actor: Actor, *roles: str) -> None:
+        """校验操作者角色，供同包的领域扩展服务复用。"""
+        self._require(actor, *roles)
+
+    def check_identifier(self, value: str, field: str) -> str:
+        """校验标识符格式，供同包的领域扩展服务复用。"""
+        return self._identifier(value, field)
+
+    def now_text(self) -> str:
+        """返回当前 UTC 时间文本，供同包的领域扩展服务复用。"""
+        return self._now()
+
+    def idempotent(self, connection, *, request_id: str, action: str,
+                   payload: dict[str, Any], create: Callable[[], tuple[str, str, dict[str, Any]]]) -> WriteReceipt:
+        """执行幂等写入，供同包的领域扩展服务复用。"""
+        return self._idempotent(connection, request_id=request_id, action=action,
+                                payload=payload, create=create)
+
     def _idempotent(self, connection, *, request_id: str, action: str,
                     payload: dict[str, Any], create: Callable[[], tuple[str, str, dict[str, Any]]]) -> WriteReceipt:
         request_id = self._identifier(request_id, "request_id")
